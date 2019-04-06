@@ -39,6 +39,7 @@
     var isRunning = false;
     var shouldReset = false;
     var shouldUpdateCanvas = false;
+    var shouldResetWalls = false;
 
     window.onload = function main() {
         canvas = document.createElement("canvas");
@@ -156,8 +157,10 @@
         return function() {
             if(shouldReset){
                 stop(data);
-                resetTiles(data);
-            } else if(shouldUpdateCanvas) {
+                resetVisited(data);
+            }else if(shouldResetWalls){
+                clearWalls(data);
+            }else if(shouldUpdateCanvas) {
                 stop(data);
                 data = init(data);
             } else if(isRunning){
@@ -323,15 +326,24 @@
         }
     }
 
-    function resetTiles(data){
+    function resetVisited(data){
         for(let i=data.tiles.length; i--;){
-            if(data.tiles[i].state === Tile.VISITED || data.tiles[i].state === Tile.WALL){
+            if(data.tiles[i].state === Tile.VISITED){
                 data.tiles[i].flip(Tile.BLANK);
             }
         }
         shouldReset = false;
         isRunning = false;
         data.isInit = false;
+    }
+
+    function clearWalls(data){
+        for(let i=data.tiles.length; i--;){
+            if(data.tiles[i].state === Tile.WALL){
+                data.tiles[i].flip(Tile.BLANK);
+            }
+        }
+        shouldResetWalls = false;
     }
 
     function mouseDown(e, data){
@@ -452,6 +464,10 @@
         shouldReset = true;
     }
 
+    function resetWalls(){
+        shouldResetWalls = true;
+    }
+
     function updateCanvas(){
         if(
             rows !== parseInt(rowsElem.value, 10) ||
@@ -472,7 +488,8 @@
         <option value="2">A-Star</option>
     </select>
 
-    <button onclick="reset()">Reset</button><br>
+    <button onclick="reset()">Clear</button>
+    <button onclick="resetWalls()">Remove Walls</button><br>
     Rows: <input type="number" id="rows" value="20" onblur="updateCanvas()"><br>
     Cols: <input type="number" id="cols" value="30" onblur="updateCanvas()"><br>
     Cell Size: <input type="number" id="cellSize" value="20" onblur="updateCanvas()"><br>
