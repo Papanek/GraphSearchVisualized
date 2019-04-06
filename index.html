@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8"/>
+        <title>Search Visualization</title>
+
+        <style>
+            canvas {
+                border: 1px solid #000;
+                position: absolute;
+                margin: auto;
+                top: 0;
+                bottom: 0;
+                left: 0;
+                right: 0;
+            }
+
+        </style>
+
+<script src="https://unpkg.com/tinyqueue@2.0.0/tinyqueue.min.js"></script>
+<script>
+    var canvas;
+    var rows;
+    var cols;
+    var padding;
+    var cellSize;
+
+    var rowsElem;
+    var colsElem;
+    var paddingElem;
+    var cellSizeElem;
+    
+    var totalCellSize;
+    var canvasWidth;
+    var canvasHeight;
+
+    var searchSelect;
+
+    var isRunning = false;
+    var shouldReset = false;
+    var shouldUpdateCanvas = false;
+
+    window.onload = function main() {
+        canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        
+        document.body.appendChild(canvas);
+        searchSelect = document.getElementById('searchType');
+        rowsElem = document.getElementById('rows');
+        colsElem = document.getElementById('cols');
+        paddingElem = document.getElementById('padding');
+        cellSizeElem = document.getElementById('cellSize');
+
+        Tile.BLANK = 0;
+        Tile.WALL = 1;
+        Tile.VISITED = 2;
+        Tile.START = 3;
+        Tile.TARGET = 4;
+        
+        var data = init(data);
+
+        canvas.addEventListener("mousedown", function(e){
+            mouseDown(e, data);
+
+            canvas.onmousemove = function(e){
+                mouseDown(e, data);
+            }
+        });
+
+        canvas.addEventListener("mouseup", function(e){
+            data.isDraggingStart = false;
+            data.isDraggingTarget = false;
+            data.isDrawingWall = false;
+            canvas.onmousemove = null
+        });
+
+        window.requestAnimationFrame(tick(canvas, ctx, data));
+    }
+
+    function init(data) {
+        initCanvas();
+        return initGraph(data);
+    }
+
+    function initCanvas(){
+        shouldUpdateCanvas = false;
+        rows = parseInt(rowsElem.value, 10);
+        cols = parseInt(colsElem.value, 10);
+        padding = parseInt(paddingElem.value, 10);
+        cellSize = parseInt(cellSizeElem.value, 10);
+
+        totalCellSize = padding + cellSize;
+        canvasWidth = padding + totalCellSize * cols;
+        canvasHeight = padding + totalCellSize * rows;
+
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+    }
+
+    function initGraph(data){
+        if(!data){
+            data = {
+                tiles: [],
+            }
+        }
+        data.tiles.length = 0;
+
+        for(var i=0; i<rows; i++){
+            var y = i * totalCellSize + padding;
+            for(var j=0; j<cols; j++){
+                var x = j * totalCellSize + padding;
+                data.tiles.push(new Tile(x, y))
+            }
+        }
+
+        data.tiles[0].flip(Tile.START);
+        data.tiles[rows*cols-1].flip(Tile.TARGET);
+
+        data.adjMatrix = generateMatrix();
+
+        return data;
+    }
+
+    function generateMatrix(){
+        let n = rows*cols;
+        let matrix = [];
+
+        for(var i=0; i<n; i++){
+            matrix[i] = [];
+            for(var j=0; j<n; j++){
+                matrix[i].push(0);
+            }
+        }
+
+        for(var i=0; i<rows; i++){
+            for(var j=0; j<cols; j++){
+                let current = i * cols + j;
+                let down = (i+1) * cols + j;
+                let right = i * cols + j + 1;
+
+                if(j+1 < cols){
+                    matrix[current][right] = 1;
+                    matrix[right][current] = 1;
+                }
+                if(i+1 < rows){
+                    matrix[current][down] = 1;
+                    matrix[down][current] = 1;
+                }
+            }
+        }
+
+        return matrix;
+    }
+
+    function tick(canvas, ctx, data){
+        return function() {
+            if(shouldReset){
+                stop(data);
+                resetTiles(data);
+            } else if(shouldUpdateCanvas) {
+                stop(data);
+                data = init(data);
+            } else if(isRunning){
+                update(data);
+            }
+            render(ctx, data);
+            window.requestAnimationFrame(tick(canvas, ctx, data));
+        }
+    }
+
+    function update(data) {
+        if(!data.isInit){
+            initStart(data);
+        }
+
+        if(searchSelect.selectedIndex === 0){
+            bfs(data)
+        }
+
+        if(searchSelect.selectedIndex === 1){
+            dfs(data);
+        }
+
+        if(searchSelect.selectedIndex === 2){
+            aStar(data);
+        }
+    } 
+
+    function render(ctx, data) {
+        for(var i = data.tiles.length; i--;){
+            if(data.tiles[i].changed){
+                data.tiles[i].draw(ctx);
+            }
+        }
+    }
+
+    function stop(data){
+        isRunning = false;
+        data.isInit = false;
+    }
+
+    function initStart(data){
+        findStartTarget(data);
+        data.list = [data.start]
+        data.visited = [];
+
+        data.pQ = new TinyQueue([{node: data.start, dist: 0}], function (a, b) {
+            return a.dist - b.dist;
+        });
+
+        data.isInit = true;
+    }
+
+    function findStartTarget(data){
+        for(let i = data.tiles.length; i--;){
+            if(data.tiles[i].state === Tile.START){
+                data.start = i;
+            } else if (data.tiles[i].state === Tile.TARGET){
+                data.target = i;
+            }
+        }
+    }
+
+    function bfs(data){
+        if(data.list.length === 0){
+            stop(data);
+            return;
+        }
+
+        let current = data.list.shift();
+
+        if(current === data.target){
+            stop(data);
+            return;
+        }
+
+        if(current != data.start){
+            data.tiles[current].flip(Tile.VISITED);
+        }
+        
+        for(let i=0; i<data.adjMatrix.length; i++){
+            if(     data.adjMatrix[current][i] === 1 &&
+                    !data.visited[i] &&
+                    data.tiles[i].state !== Tile.WALL
+                ){
+                data.visited[i] = true;
+                data.list.push(i);
+            }
+        }
+    }
+
+    function dfs(data){
+        if(data.list.length === 0){
+            stop(data);
+            return;
+        }
+
+        let current = data.list.pop();
+
+        if(current === data.target){
+            stop(data);
+            return;
+        }
+
+        data.visited[current] = true;
+
+        if(current != data.start){
+            data.tiles[current].flip(Tile.VISITED);
+        }
+
+        if(current === data.target){
+            stop(data);
+            return;
+        }
+
+        for(let i=0; i<data.adjMatrix.length; i++){
+            if(     data.adjMatrix[current][i] === 1 &&
+                    !data.visited[i] &&
+                    data.tiles[i].state !== Tile.WALL
+                ){
+                data.list.push(i);
+            }
+        }
+    }
+
+    function aStar(data){
+        if(data.pQ.length === 0){
+            stop(data);
+            return;
+        }
+
+        let current = data.pQ.pop();
+        if(data.visited[current.node]){
+            return;
+        }
+        data.visited[current.node] = true;
+
+        if(current.node === data.target){
+            stop(data);
+            return;
+        }
+
+        if(current.node != data.start){
+            data.tiles[current.node].flip(Tile.VISITED);
+        }
+        
+        for(let i=0; i<data.adjMatrix.length; i++){
+            if(     data.adjMatrix[current.node][i] === 1 &&
+                    !data.visited[i] &&
+                    data.tiles[i].state !== Tile.WALL
+                ){
+
+                let cI = Math.floor(i/cols);
+                let cJ = i%cols;
+
+                let tI = Math.floor(data.target/cols);
+                let tJ = data.target%cols;
+
+                let dist = Math.sqrt(Math.pow(cI-tI, 2) + Math.pow(cJ-tJ, 2));
+
+                data.pQ.push({node: i, dist: dist});
+            }
+        }
+    }
+
+    function resetTiles(data){
+        for(let i=data.tiles.length; i--;){
+            if(data.tiles[i].state === Tile.VISITED || data.tiles[i].state === Tile.WALL){
+                data.tiles[i].flip(Tile.BLANK);
+            }
+        }
+        shouldReset = false;
+        isRunning = false;
+        data.isInit = false;
+    }
+
+    function mouseDown(e, data){
+        let el = e.target;
+
+        let px = e.clientX - el.offsetLeft;
+        let py = e.clientY - el.offsetTop;
+
+        if(
+            px >= padding && 
+            py >= padding &&
+            px <= canvasWidth-padding*2 &&
+            py <= canvasHeight-padding*2
+        ){
+            let iX = Math.floor(px/(totalCellSize));
+            let iY = Math.floor(py/(totalCellSize));
+            let idx = iX + (iY * cols);
+
+            if(!data.isDraggingStart && !data.isDraggingTarget && !data.isDrawingWall){
+                data.previousIdx = idx;
+                data.previousState = Tile.BLANK;
+                if(data.tiles[idx].state === Tile.START){
+                    data.isDraggingStart = true;
+                } else if (data.tiles[idx].state === Tile.TARGET){
+                    data.isDraggingTarget = true;
+                } else {
+                    data.isDrawingWall = true;
+                }
+            }
+
+            if(idx != data.previousIdx){
+                let currentState;
+
+                if(data.isDraggingStart){
+                    if(data.tiles[idx].state === Tile.TARGET){
+                        return;
+                    }
+
+                    currentState = data.tiles[idx].state;
+                    data.tiles[idx].flip(Tile.START);
+                    if(data.previousState>-1){
+                        data.tiles[data.previousIdx].flip(data.previousState);
+                    }
+                }
+
+                if(data.isDraggingTarget){
+                    if(data.tiles[idx].state === Tile.START){
+                        return;
+                    }
+                    currentState = data.tiles[idx].state;
+                    data.tiles[idx].flip(Tile.TARGET);
+                    if(data.previousState>-1){
+                        data.tiles[data.previousIdx].flip(data.previousState);
+                    }
+                }
+
+                if(data.isDrawingWall){
+                    if(data.tiles[idx].state !== Tile.START && data.tiles[idx].state !== Tile.TARGET){
+                        data.tiles[idx].flip(Tile.WALL);
+                    }
+                }
+
+                data.previousIdx = idx;
+                data.previousState = currentState;
+            } 
+        }
+    }
+
+    function Tile(x, y) {
+        this.x = x;
+        this.y = y;
+
+        this.changed = true;
+        this.state = Tile.BLANK;
+
+        this.flip = function(next){
+            if(this.state !== next){
+                this.state = next;
+                this.changed = true;
+            }
+        }
+
+        this.update = function() {
+        }
+
+        this.draw = function(ctx) {
+            switch(this.state){
+                case Tile.BLANK:
+                    ctx.fillStyle = "skyblue";
+                    ctx.fillRect(this.x, this.y, cellSize, cellSize);
+                break;
+                case Tile.WALL:
+                    ctx.fillStyle = "green";
+                    ctx.fillRect(this.x, this.y, cellSize, cellSize);
+                break;
+                case Tile.VISITED:
+                    ctx.fillStyle = "orange";
+                    ctx.fillRect(this.x, this.y, cellSize,cellSize);
+                break;
+                case Tile.START:
+                    ctx.fillStyle = "blue";
+                    ctx.fillRect(this.x, this.y, cellSize,cellSize);
+                break;
+                case Tile.TARGET:
+                    ctx.fillStyle = "red";
+                    ctx.fillRect(this.x, this.y, cellSize,cellSize);
+                break;
+            }
+            this.changed = false;
+        }
+    }
+
+    function start(){
+        isRunning = true;
+    }
+
+    function reset(){
+        shouldReset = true;
+    }
+
+    function updateCanvas(){
+        if(
+            rows !== parseInt(rowsElem.value, 10) ||
+            cols !== parseInt(colsElem.value, 10) ||
+            padding !== parseInt(paddingElem.value, 10) ||
+            cellSize !== parseInt(cellSizeElem.value, 10)
+        ){
+            shouldUpdateCanvas = true;
+        }
+    }
+</script>
+</head>
+<body>
+    <button onclick="start()">Start</button>
+    <select id="searchType">
+        <option value="0">BFS</option>
+        <option value="1">DFS</option>
+        <option value="2">A-Star</option>
+    </select>
+
+    <button onclick="reset()">Reset</button><br>
+    Rows: <input type="number" id="rows" value="20" onblur="updateCanvas()"><br>
+    Cols: <input type="number" id="cols" value="30" onblur="updateCanvas()"><br>
+    Cell Size: <input type="number" id="cellSize" value="20" onblur="updateCanvas()"><br>
+    Padding: <input type="number" id="padding" value="2" onblur="updateCanvas()"><br>
+</body>
+</html>
